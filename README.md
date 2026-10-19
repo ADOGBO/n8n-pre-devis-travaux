@@ -9,12 +9,15 @@ Le workflow produit un pré-devis chiffré, soumis à un responsable
 avant tout envoi.
 
 ## Structure
-
+```text
 n8n-pre-devis-travaux/
 ├── workflow.json
 ├── README.md
 └── docs/
     └── canevas.png   (capture d'écran du workflow complet)
+
+```
+
 
 ## Fonctionnement
 1. Formulaire de demande (n8n Form Trigger)
