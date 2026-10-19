@@ -1,0 +1,472 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Demande de devis travaux.",
+        "formDescription": "Décrivez le chantier, un pré-devis sera généré",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Nom du client",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Email",
+              "fieldType": "email",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Type de bien",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Appartement"
+                  },
+                  {
+                    "option": "Maison"
+                  },
+                  {
+                    "option": "Immeuble"
+                  }
+                ]
+              }
+            },
+            {
+              "fieldLabel": "Surface (m²)",
+              "fieldType": "number",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "État général",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Bon"
+                  },
+                  {
+                    "option": "Moyen"
+                  },
+                  {
+                    "option": "À rénover entièrement"
+                  }
+                ]
+              }
+            },
+            {
+              "fieldLabel": "Description des travaux",
+              "fieldType": "textarea",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        0
+      ],
+      "id": "e15f3657-e04d-4562-bc3e-f0f4dc381df5",
+      "name": "On form submission",
+      "webhookId": "cd7f911e-9e52-4e5d-bee3-38131a55fc0e"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: \"qwen/qwen3.8-27b\",\n  temperature: 0.1,\n  reasoning_format: \"hidden\",\n  response_format: { type: \"json_object\" },\n  messages: [\n    { role: \"system\", content: 'Tu es un assistant de chiffrage travaux pour un investisseur locatif. Reponds uniquement en JSON valide, format : {\"postes\":[{\"categorie\":\"...\",\"description\":\"...\",\"quantite\":0,\"unite\":\"m2\"}]}. Categories autorisees : plomberie, peinture, sol, electricite, menuiserie, maconnerie, autre. Unites autorisees : m2, u, forfait. Ne donne aucun prix. Si une quantite manque, estime-la a partir de la surface.' },\n    { role: \"user\", content: \"Bien : \" + $json[\"Type de bien\"] + \", \" + $json[\"Surface (m²)\"] + \" m2, etat : \" + $json[\"État général\"] + \". Travaux : \" + $json[\"Description des travaux\"] }\n  ]\n}) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ],
+      "id": "9f328504-e9d3-4622-94ff-c5054a974693",
+      "name": "HTTP Request",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "Mqrlf045CoTe2Wf8",
+          "name": "Groq API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.choices[0].message.content;\nconst form = $('On form submission').first().json;\n\nlet data;\ntry {\n  data = JSON.parse(raw.replace(/```json|```/g, '').trim());\n  if (!Array.isArray(data.postes) || data.postes.length === 0) {\n    throw new Error('Liste \"postes\" absente ou vide');\n  }\n} catch (e) {\n  return [{ json: { erreur: true, message: e.message, brut: raw } }];\n}\n\nreturn data.postes.map(p => ({\n  json: {\n    ...p,\n    client: form['Nom du client'],\n    email: form['Email']\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "id": "9451cccf-3814-427d-8de0-f8df9815e452",
+      "name": "Parser réponse IA Queen"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Barème FICTIF (€ HT) par catégorie et par unité\nconst bareme = {\n  plomberie:   { m2: 120, u: 250, forfait: 2500 },\n  peinture:    { m2: 25,  u: 60,  forfait: 800 },\n  sol:         { m2: 55,  u: 80,  forfait: 1500 },\n  electricite: { m2: 90,  u: 70,  forfait: 1800 },\n  menuiserie:  { m2: 150, u: 300, forfait: 1200 },\n  maconnerie:  { m2: 110, u: 200, forfait: 2000 },\n  autre:       { m2: 80,  u: 100, forfait: 1000 }\n};\n\nconst items = $input.all();\nif (items[0].json.erreur) return items; // on laisse passer l'erreur\n\nreturn items.map(({ json: p }) => {\n  const cat = bareme[p.categorie] ? p.categorie : 'autre';\n  let unite = p.unite;\n  let qte = Number(p.quantite) || 1;\n  if (bareme[cat][unite] === undefined) { unite = 'forfait'; qte = 1; }\n  const pu = bareme[cat][unite];\n  return { json: { ...p, categorie: cat, unite, quantite: qte,\n    prix_unitaire: pu, total_ht: Math.round(qte * pu * 100) / 100 } };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "id": "7cb6156d-4b63-4a97-8e4e-3e80668cd980",
+      "name": "Appliquer barème"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\n// Si l'IA a échoué en amont, on laisse passer l'erreur\nif (items[0].json.erreur) return items;\n\nconst TAUX_TVA = 0.10; // 10 % : travaux de rénovation en logement ancien (modifiable)\nconst arrondi = n => Math.round(n * 100) / 100;\n\nconst lignes = items.map(i => ({\n  categorie: i.json.categorie,\n  description: i.json.description,\n  quantite: i.json.quantite,\n  unite: i.json.unite,\n  prix_unitaire: i.json.prix_unitaire,\n  total_ht: i.json.total_ht\n}));\n\nconst total_ht = arrondi(lignes.reduce((s, l) => s + l.total_ht, 0));\nconst montant_tva = arrondi(total_ht * TAUX_TVA);\nconst total_ttc = arrondi(total_ht + montant_tva);\n\nconst date = new Date();\nconst numero = 'DEV-' + date.toISOString().slice(0, 10).replace(/-/g, '') + '-' +\n               String(Math.floor(Math.random() * 900) + 100);\n\nreturn [{\n  json: {\n    numero,\n    date: date.toLocaleDateString('fr-FR'),\n    client: items[0].json.client,\n    email: items[0].json.email,\n    lignes,\n    total_ht,\n    taux_tva: TAUX_TVA * 100,\n    montant_tva,\n    total_ttc\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ],
+      "id": "d4954e67-a959-4f91-bf30-dbf8056ce1c5",
+      "name": "Calculer totaux"
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\n\n// Si l'IA a échoué en amont, on laisse passer l'erreur\nif (d.erreur) return $input.all();\n\nconst esc = s => String(s).replace(/[&<>\"]/g, c =>\n  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[c]));\nconst eur = n => n.toLocaleString('fr-FR', { minimumFractionDigits: 2 }) + ' €';\n\nconst rows = d.lignes.map(l => `\n  <tr>\n    <td>${esc(l.categorie)}</td>\n    <td>${esc(l.description)}</td>\n    <td class=\"r\">${l.quantite} ${esc(l.unite)}</td>\n    <td class=\"r\">${eur(l.prix_unitaire)}</td>\n    <td class=\"r\">${eur(l.total_ht)}</td>\n  </tr>`).join('');\n\nconst html = `<!DOCTYPE html>\n<html lang=\"fr\"><head><meta charset=\"utf-8\"><title>${d.numero}</title>\n<style>\n  body{font-family:Arial,sans-serif;max-width:800px;margin:30px auto;color:#222}\n  h1{margin-bottom:0} .tag{color:#b45309;font-weight:bold}\n  table{width:100%;border-collapse:collapse;margin-top:20px}\n  th,td{border:1px solid #ddd;padding:8px;font-size:14px}\n  th{background:#f3f4f6;text-align:left} .r{text-align:right}\n  .tot td{border:none;padding:4px 8px} .tot .big{font-size:16px;font-weight:bold}\n  small{color:#666}\n</style></head><body>\n  <h1>Pré-devis travaux</h1>\n  <p class=\"tag\">Document indicatif, à valider par notre équipe</p>\n  <p><b>N° :</b> ${d.numero}<br><b>Date :</b> ${d.date}<br>\n  <b>Client :</b> ${esc(d.client)} (${esc(d.email)})</p>\n  <table>\n    <tr><th>Catégorie</th><th>Description</th><th class=\"r\">Quantité</th>\n        <th class=\"r\">PU HT</th><th class=\"r\">Total HT</th></tr>\n    ${rows}\n  </table>\n  <table class=\"tot\" style=\"width:320px;margin-left:auto\">\n    <tr><td>Total HT</td><td class=\"r\">${eur(d.total_ht)}</td></tr>\n    <tr><td>TVA (${d.taux_tva} %)</td><td class=\"r\">${eur(d.montant_tva)}</td></tr>\n    <tr class=\"big\"><td class=\"big\">Total TTC</td><td class=\"r big\">${eur(d.total_ttc)}</td></tr>\n  </table>\n  <p><small>Estimation générée automatiquement à partir de la description du chantier. Prix fictifs (démo).</small></p>\n</body></html>`;\n\nconst binary = await this.helpers.prepareBinaryData(\n  Buffer.from(html, 'utf-8'), d.numero + '.html', 'text/html');\n\nreturn [{ json: { ...d, html }, binary: { data: binary } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        0
+      ],
+      "id": "6b7b27aa-ec64-495f-b765-3490116fa516",
+      "name": "Générer pré-devis"
+    },
+    {
+      "parameters": {
+        "resume": "form",
+        "formTitle": "Validation du pré-devis",
+        "formDescription": "=Devis {{ $json.numero }} pour {{ $json.client }} : {{ $json.total_ttc }} € TTC",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Décision",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": " Refuser"
+                  },
+                  {
+                    "option": "Approuver"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Commentaire",
+              "fieldType": "textarea"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1792,
+        0
+      ],
+      "id": "063c9552-05a5-4cb6-b656-d9a15348719f",
+      "name": "Validation responsable",
+      "webhookId": "59ffc462-31d5-4aa4-a610-3e90107e81bd"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e17d9e46-c311-4b75-baee-985d25ed311d",
+              "leftValue": "={{ $json[\"Décision\"] }}",
+              "rightValue": "=Approuver",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "3a06d50a-e4b1-4afc-beff-94850705a582",
+              "leftValue": "",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2016,
+        0
+      ],
+      "id": "0c190f14-02a0-40fc-b1c2-090d28d7a18d",
+      "name": "Devis approuvé ?"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Générer pré-devis').first().json.email }}",
+        "subject": "=Votre pré-devis {{ $('Générer pré-devis').first().json.numero }}",
+        "message": "={{ $('Générer pré-devis').first().json.html }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        2240,
+        -96
+      ],
+      "id": "b3effc9c-d58c-4a97-a0b0-cfb635dd193b",
+      "name": "Envoyer le devis.",
+      "webhookId": "03c9b700-7b04-4eaa-9575-36463ee22a97",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "KiwEQo9PGJmxzISJ",
+          "name": "Gmail account 3"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2240,
+        96
+      ],
+      "id": "568e5799-636e-4ccb-90f5-621aa009a0a4",
+      "name": "Devis refusé"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "819ff926-1ccc-4812-84dd-20370d554c3c",
+              "leftValue": "={{ $json.erreur !== true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        448,
+        0
+      ],
+      "id": "cca2091a-b367-4b7d-88ab-da170a3869ab",
+      "name": "IA valide ?"
+    },
+    {
+      "parameters": {
+        "sendTo": "demo@example.com",
+        "subject": "Alerte : échec de l'extraction IA",
+        "emailType": "text",
+        "message": "=Le modèle n'a pas renvoyé un JSON valide.  Erreur : {{ $json.message }}  Sortie brute : {{ $json.brut || JSON.stringify($json.detail) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        672,
+        0
+      ],
+      "id": "b9f95e63-7036-4c4c-9502-ea4b8f2ae2a4",
+      "name": "Send a message",
+      "webhookId": "87488f8a-afc2-4f65-9f74-664436bb6b60",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "KiwEQo9PGJmxzISJ",
+          "name": "Gmail account 3"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "IA valide ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parser réponse IA Queen": {
+      "main": [
+        [
+          {
+            "node": "Appliquer barème",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Appliquer barème": {
+      "main": [
+        [
+          {
+            "node": "Calculer totaux",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculer totaux": {
+      "main": [
+        [
+          {
+            "node": "Générer pré-devis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Générer pré-devis": {
+      "main": [
+        [
+          {
+            "node": "Validation responsable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation responsable": {
+      "main": [
+        [
+          {
+            "node": "Devis approuvé ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Devis approuvé ?": {
+      "main": [
+        [
+          {
+            "node": "Envoyer le devis.",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Devis refusé",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IA valide ?": {
+      "main": [
+        [
+          {
+            "node": "Parser réponse IA Queen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        [
+          {
+            "node": "Parser réponse IA Queen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "4f8dfbfe-df53-4b03-b3a9-9513ee7391d0",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "86930b95f651dde97025889e18630b4aec8684e733041147eb6cbd29c89f7609"
+  },
+  "nodeGroups": [],
+  "id": "l7CDrulC0yPTdjPC",
+  "tags": []
+}
