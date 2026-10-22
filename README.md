@@ -14,6 +14,7 @@ n8n-pre-devis-travaux/
 ├── workflow.json
 ├── README.md
 └── docs/
+    ├── bareme.png (capture d'écran du barème fictif)
     └── canevas.png   (capture d'écran du workflow complet)
 
 ```
@@ -23,7 +24,7 @@ n8n-pre-devis-travaux/
 1. Formulaire de demande (n8n Form Trigger)
 2. Extraction des postes de travaux par un LLM (API Groq, modèle Qwen)
 3. Contrôle du JSON renvoyé + alerte email en cas d'échec
-4. Application d'un barème de prix (fictif)
+4. Application d'un barème de prix avec Google Sheet
 5. Calcul HT / TVA / TTC et génération du devis HTML
 6. Validation humaine (nœud Wait)
 7. Envoi du devis par Gmail
@@ -32,10 +33,10 @@ n8n-pre-devis-travaux/
 - Sortie IA invalide : alerte email, aucun devis envoyé
 - API indisponible : erreur capturée, même alerte
 - Aucun envoi sans approbation d'un responsable
+- Barème intégré  dans Google Sheet modifiable
+  par les équipes
 
 ## Limites et évolutions
-- Barème intégré au code : à remplacer par un Google Sheet modifiable
-  par les équipes
 - Pas de PDF : le devis part en HTML dans l'email
 - Données fictives uniquement
 - Piste : interroger un RAG (historique de devis) avant le chiffrage
